@@ -1,198 +1,237 @@
-# 🌐 Day 1: Bits, Bytes, Hexadecimal, Physical Signals & The Wire
+# Day 01: Bits, Bytes, Hex & Physical Layer Physics: Nyquist-Shannon Limits, Line Coding & Endianness
 
-> **Zero External Dependency Guarantee**: This document is an exhaustive, encyclopedic masterclass. It contains complete historical context, physical electrical wave mechanics, Claude Shannon's mathematical capacity limits, line encoding schemes, byte-endianness on the wire, real production war stories, and FAANG technical interview questions. You do NOT need any textbook or external website.
-
----
-
-## 1. Executive Summary & The Physical Reality of Networking
-
-### The Great Illusion of Software
-Software developers write high-level code like `fetch("https://api.github.com/users")` or `socket.send("Hello")`. It feels like strings and objects fly across the internet like magic.
-
-The physical reality is radically different:
-* There are no "strings" in physics.
-* There are no "numbers" in physics.
-* In physical reality, the internet is composed entirely of:
-  1. **Copper Cables**: Variations in electrical voltage ($+5\text{V}$ vs $0\text{V}$, or differential voltages like $+0.8\text{V}$ vs $-0.8\text{V}$).
-  2. **Fiber Optic Glass**: Pulses of laser photons at specific infrared wavelengths ($1310\text{ nm}$ or $1550\text{ nm}$).
-  3. **Radio Waves (Wi-Fi / 5G)**: Modulated electromagnetic waves vibrating through the air at $2.4\text{ GHz}$, $5\text{ GHz}$, or $28\text{ GHz}$.
-
-Every WhatsApp text, video stream, and bank transaction is translated into physical wave pulses, propelled across continents at two-thirds the speed of light, and reconstructed into data.
+> **Zero External Dependency Guarantee**: This document is an encyclopedic, self-contained masterclass. It contains complete telecommunications history, mathematical capacity derivations (Nyquist vs Shannon-Hartley), line coding waveforms, big-endian network byte order physics, bitwise C and Python algorithms, subsea cable cut post-mortems, and FAANG staff-level interview questions. You do NOT need any textbook or external website.
 
 ---
 
-## 2. Information Theory: Claude Shannon & The Mathematical Limits of Data
+## 1. Executive Summary & Historical Origins
 
-In 1948, Claude Shannon published his historic paper *"A Mathematical Theory of Communication"*, founding the science of modern digital communication.
+Computer networking is the art and science of transmitting discrete symbolic information across physical reality. Regardless of whether data travels across copper twisted-pair Ethernet cables, high-purity silica fiber-optic strands, or radio frequency electromagnetic waves, physical channels do not understand "JSON", "HTTP", or "files".
+
+Physical channels only understand **continuous physical phenomena**:
+* Voltage differentials (in copper).
+* Photons and laser wavelengths (in optical fiber).
+* Radio frequency oscillations (in Wi-Fi and satellite).
+
+To transmit data, computer scientists must convert discrete abstractions into electromagnetic signals, subject to the unbreakable laws of physics and thermodynamics formulated by Harry Nyquist (1928) and Claude Shannon (1948).
 
 ```
-       [ INFORMATION SOURCE ] ──────► [ ENCODER ] ──────► [ NOISY PHYSICAL CHANNEL ]
-                                                                   │
-                                                                   ▼ (Thermal Noise: Johnson-Nyquist)
-       [ DESTINATION ]        ◄────── [ DECODER ] ◄────── [ RECEIVED SIGNAL + NOISE ]
+THE NETWORKING PHYSICAL LAYER ABSTRACTION:
++-------------------+      Digital Encoding      +-----------------------------+
+| Application Data  | -------------------------> | Discrete Bits & Bytes       |
+| (JSON / Strings)  |                            | (01001000 01101001 ...)     |
++-------------------+                            +-----------------------------+
+                                                                |
+                                                                v Modulation & Line Coding
++-------------------+      Physical Reality      +-----------------------------+
+| Electromagnetic   | <------------------------- | Continuous Physical Signal  |
+| Radiation / Waves |                            | (Voltages, Pulses, Photons) |
++-------------------+                            +-----------------------------+
 ```
 
-Shannon answered the fundamental question: **"What is the maximum theoretical speed you can send data through any physical wire without errors?"**
+---
 
-### 1. The Nyquist Limit (For a Perfect, Noiseless Channel)
-In 1928, Harry Nyquist proved that if a channel has a bandwidth of $B$ Hertz (cycles per second), the maximum number of discrete signal changes per second is $2B$:
+## 2. Mathematical Physics: The Fundamental Channel Capacity Theorems
 
-$$C = 2B \log_2(M)$$
+Every communication medium possesses two immutable physical constraints:
+1. **Bandwidth ($B$)**: The range of frequencies (in Hertz, $\text{Hz}$) that the physical medium can transmit without fatal attenuation.
+2. **Noise ($N$)**: Unavoidable thermal and electromagnetic interference present in all physical matter.
+
+### 2.1 The Nyquist Intersymbol Interference Theorem (Noiseless Channel)
+In 1928, Harry Nyquist proved that if an arbitrary signal is passed through a low-pass filter of bandwidth $B$, the signal can be completely reconstructed by taking $2B$ discrete samples per second. If a signal consists of $M$ discrete voltage levels:
+
+$$\mathbf{C_{\text{Nyquist}} = 2 \cdot B \cdot \log_2(M) \quad \text{bits per second}}$$
+
+* If bandwidth $B = 1\text{ MHz}$ and binary signaling is used ($M = 2$ voltage levels: $0\text{V}$ and $5\text{V}$):
+  $$C = 2 \times 10^6 \times \log_2(2) = 2\text{ Mbps}$$
+* If we use 4 distinct voltage levels ($M = 4$: $0\text{V}, 1.5\text{V}, 3.0\text{V}, 4.5\text{V}$):
+  $$C = 2 \times 10^6 \times \log_2(4) = 4\text{ Mbps}$$
+
+### 2.2 The Shannon-Hartley Capacity Theorem (Noisy Channel)
+Nyquist assumed a perfect, noiseless universe. In 1948, Claude Shannon published *A Mathematical Theory of Communication*, deriving the absolute theoretical upper bound for data transmission over any channel corrupted by Gaussian thermal noise:
+
+$$\mathbf{C_{\text{Shannon}} = B \cdot \log_2\left(1 + \frac{S}{N}\right) \quad \text{bits per second}}$$
 
 Where:
-* $C$ = Maximum channel capacity in bits per second (bps).
-* $B$ = Bandwidth in Hertz ($\text{Hz}$).
-* $M$ = Number of distinct signal voltage levels used.
+* $B$ = Channel Bandwidth in Hertz.
+* $S$ = Average Signal Power in Watts.
+* $N$ = Average Noise Power in Watts.
+* $S/N$ = Signal-to-Noise Ratio (SNR, linear power ratio).
 
-### 2. The Shannon-Hartley Theorem (For Real-World Noisy Channels)
-In the real world, heat causes electrons to vibrate randomly in copper cables, generating background static called **Thermal Noise** (White Gaussian Noise). Shannon proved that noise places an absolute, unbreakable physical ceiling on transmission speed:
-
-$$C = B \log_2 \left( 1 + \frac{S}{N} \right)$$
-
-Where:
-* $B$ = Bandwidth in Hertz.
-* $\frac{S}{N}$ = Signal-to-Noise Ratio (SNR) as a linear power ratio (often expressed in Decibels: $\text{SNR}_{\text{dB}} = 10 \log_{10} \frac{S}{N}$).
-
-> **Why This Matters to Software Engineers**:  
-> No matter how smart your software algorithms are, you cannot exceed Shannon's law. If a Wi-Fi router gets further away from your laptop, the Signal ($S$) decreases while Noise ($N$) stays constant, forcing your network card to automatically downshift its speed to prevent transmission errors!
-
----
-
-## 3. How Physical Waves Become Bits: Line Encoding
-
-How does a continuous analog voltage waveform turn into discrete digital `1`s and `0`s?
+#### Signal-to-Noise Ratio in Decibels ($\text{dB}$):
+Engineers measure SNR logarithmically:
+$$\text{SNR}_{\text{dB}} = 10 \cdot \log_{10}\left(\frac{S}{N}\right) \quad \iff \quad \frac{S}{N} = 10^{\frac{\text{SNR}_{\text{dB}}}{10}}$$
 
 ```
-Clock:     |   1   |   0   |   1   |   1   |   0   |   0   |   1   |
-           ┌───────┐       ┌───────┐───────┐               ┌───────┐
-NRZ-L:     │       │       │       │       │               │       │
-       ────┘       └───────┘       └───────┴───────────────┴───────┘
-           ▲
-           Voltage = +5V (Logic 1)
-           Voltage =  0V (Logic 0)
-```
+WORKED EXAMPLE: A Standard Telephone Line
+Bandwidth B = 3,000 Hz (3 kHz).
+Typical SNR = 30 dB.
+Linear SNR: S/N = 10^(30/10) = 10^3 = 1,000.
 
-### 1. Non-Return-to-Zero (NRZ)
-* High voltage = `1`, Low voltage = `0`.
-* **The Fatal Flaw**: If you send 1,000 zeros in a row, the voltage stays flat at 0V for a long time. The receiver's clock drifts, loses synchronization, and cannot tell if 998 or 1,002 zeros were sent!
-
-### 2. Manchester Encoding (Used in Classic 10BASE-T Ethernet)
-* To guarantee that the receiver's clock never drifts, Manchester encoding forces a voltage transition in the **dead center of every single bit**:
-  * A **`0`** is represented by a transition from **High to Low**.
-  * A **`1`** is represented by a transition from **Low to High**.
-* Because the signal flips on every single bit, the receiver uses the transitions to lock its clock frequency in perfect synchronization with the sender!
-
-```
-Manchester: 
-Bit 0:  ┌───┐       (High to Low)
-        │   └───
-Bit 1:      ┌───    (Low to High)
-        └───┘
+Shannon Capacity:
+  C = 3,000 * log2(1 + 1,000)
+  C = 3,000 * log2(1001)
+  C = 3,000 * 9.967 ≈ 29,901 bps ≈ 30 kbps!
+This mathematical proof is why dial-up telephone modems in the 1990s hit a hard ceiling at 33.6 kbps and 56 kbps!
 ```
 
 ---
 
-## 4. Number Systems: Binary, Decimal & Hexadecimal
+## 3. Physical Line Coding Schemes: Clock Recovery & DC Bias
 
-Computers operate in **Base-2 (Binary)** because physical transistors are 2-state electronic switches (conductive or non-conductive).
-
-### Understanding Bases Mathematically:
-In any number system with Base $b$, the value of a number $d_k d_{k-1} \dots d_1 d_0$ is:
-
-$$\text{Value} = \sum_{i=0}^{k} d_i \cdot b^i = d_k b^k + \dots + d_1 b^1 + d_0 b^0$$
-
-### 1. Decimal (Base 10)
-Uses digits $0, 1, 2, 3, 4, 5, 6, 7, 8, 9$:
-$$\mathbf{254} = 2 \times 10^2 + 5 \times 10^1 + 4 \times 10^0 = 200 + 50 + 4$$
-
-### 2. Binary (Base 2)
-Uses digits $0, 1$:
-$$\mathbf{11001010}_2 = 1 \cdot 2^7 + 1 \cdot 2^6 + 0 \cdot 2^5 + 0 \cdot 2^4 + 1 \cdot 2^3 + 0 \cdot 2^2 + 1 \cdot 2^1 + 0 \cdot 2^0$$
-$$= 128 + 64 + 0 + 0 + 8 + 0 + 2 + 0 = \mathbf{202}_{10}$$
-
-### 3. Hexadecimal (Base 16)
-Uses 16 symbols: $0, 1, 2, 3, 4, 5, 6, 7, 8, 9, \text{A}(10), \text{B}(11), \text{C}(12), \text{D}(13), \text{E}(14), \text{F}(15)$:
-$$\mathbf{0xCA} = 12 \times 16^1 + 10 \times 16^0 = 192 + 10 = \mathbf{202}_{10}$$
-
-Notice how `11001010` in binary maps directly to `0xCA` in Hexadecimal!
-* The first 4 bits (`1100` = 12) $\rightarrow$ **`C`**.
-* The second 4 bits (`1010` = 10) $\rightarrow$ **`A`**.
+How do discrete bits ($0$ and $1$) map to physical electrical voltages on an Ethernet cable?
 
 ```
-  BINARY BYTE:    [ 1 1 0 0 ]   [ 1 0 1 0 ]
-                     Nibble        Nibble
-                       │             │
-  HEXADECIMAL:         C             A        ───► 0xCA (202 in Decimal)
+LINE CODING COMPARISON:
+Bit Stream:     0     1     0     0     1     1     0
+              +-----+     +-----+-----+           +-----+
+NRZ-L:        |     |     |     |     |           |     |  (High = 0, Low = 1)
+        ------+     +-----+     +     +-----+-----+     +
+
+              +--+  +--+  +--+  +--+  +--+  +--+  +--+
+Manchester:   |  |  |  |  |  |  |  |  |  |  |  |  |  |  (Mid-bit Transition:
+        ------+  +--+  +--+  +--+  +--+  +--+  +--+  +--  Low->High = 0, High->Low = 1)
+```
+
+### 3.1 Non-Return-to-Zero (NRZ)
+* Bit `1` is positive voltage; Bit `0` is zero or negative voltage.
+* **The Fatal Flaw of NRZ**:
+  1. **Clock Drift / Loss of Synchronization**: If a file transmits 10,000 consecutive zero bits, the voltage remains flat. The receiver's clock inevitably drifts by a few picoseconds, losing count of whether 9,998 or 10,002 bits were sent!
+  2. **DC Bias**: Sustained positive voltage charges the internal capacitance of Ethernet isolation transformers, causing baseline wander and signal distortion.
+
+### 3.2 Manchester Encoding (IEEE 802.3 10BASE-T)
+To solve clock synchronization, Manchester encoding embeds a clock transition **in the exact middle of every single bit period**:
+* Bit `0`: Transition from Low voltage to High voltage.
+* Bit `1`: Transition from High voltage to Low voltage.
+* **Benefit**: Guaranteed clock transition every bit period, making clock recovery trivial!
+* **Penalty**: Requires twice the frequency bandwidth ($2B$) to achieve the same data rate.
+
+### 3.3 Modern 4B/5B and 8B/10B Encoding (Gigabit & 10G Ethernet)
+Modern high-speed standards map 8-bit data bytes into 10-bit symbols. The 10-bit dictionary guarantees that there are **never more than 5 consecutive identical bits**, preventing clock drift while incurring only a $20\%$ bandwidth overhead!
+
+---
+
+## 4. Endianness & Network Byte Order: Big-Endian vs Little-Endian
+
+When multi-byte integers (such as 16-bit port numbers and 32-bit IP addresses) are placed in memory or transmitted across a wire, the order of bytes matters.
+
+```
+STORING 32-BIT INTEGER: 0x12345678 (Decimal: 305,419,896)
+Memory Byte Address:     [ 0x00 ]   [ 0x01 ]   [ 0x02 ]   [ 0x03 ]
+------------------------------------------------------------------
+Big-Endian (Network):    0x12       0x34       0x56       0x78
+                         (MSB)                            (LSB)
+------------------------------------------------------------------
+Little-Endian (x86_64):  0x78       0x56       0x34       0x12
+                         (LSB)                            (MSB)
+```
+
+* **Big-Endian**: The Most Significant Byte (MSB, `0x12`) is placed at the lowest memory address. It reads naturally from left to right, matching human decimal writing.
+* **Little-Endian**: The Least Significant Byte (LSB, `0x78`) is placed at the lowest memory address. Used natively by Intel and AMD x86_64 processors.
+
+### 4.1 The Universal Rule of Networking:
+$$\mathbf{All\ Protocol\ Headers\ on\ the\ Internet\ are\ Strictly\ BIG-ENDIAN!}$$
+
+To ensure cross-platform interoperability, the BSD socket API provides mandatory conversion functions:
+* `htons(uint16_t hostshort)`: Host to Network Short (16-bit port numbers).
+* `htonl(uint32_t hostlong)`: Host to Network Long (32-bit IPv4 addresses).
+* `ntohs(uint16_t netshort)`: Network to Host Short.
+* `ntohl(uint32_t netlong)`: Network to Host Long.
+
+On a Big-Endian CPU (e.g., SPARC or PowerPC), these macros are no-ops (`do nothing`). On an x86_64 CPU, they execute the hardware byte-swap instruction: **`bswap`**.
+
+---
+
+## 5. Complete C Implementation: Bit Packing & Endianness Engine
+
+```c
+/**
+ * endian_bit_master.c - Low-level bitfield manipulation and endianness conversion.
+ * Compile: gcc -Wall -Wextra -O2 endian_bit_master.c -o endian_bit_master
+ */
+
+#include <stdio.h>
+#include <stdint.h>
+#include <arpa/inet.h>
+
+/* Detect CPU native endianness at runtime */
+int is_cpu_little_endian(void) {
+    uint16_t test = 0x0001;
+    uint8_t *byte_ptr = (uint8_t *)&test;
+    return byte_ptr[0] == 1; // If lowest byte is 1, machine is Little-Endian!
+}
+
+/* Pack custom telemetry header into a compact 32-bit integer:
+   Bits 31-28 (4 bits): Protocol Version (e.g., 4)
+   Bits 27-24 (4 bits): Header Length in 32-bit words (e.g., 5)
+   Bits 23-16 (8 bits): Differentiated Services Code Point (DSCP)
+   Bits 15-0  (16 bits): Total Packet Length in bytes
+*/
+uint32_t pack_telemetry_header(uint8_t version, uint8_t ihl, uint8_t dscp, uint16_t total_len) {
+    uint32_t header = 0;
+    header |= ((uint32_t)(version & 0x0F)) << 28;
+    header |= ((uint32_t)(ihl & 0x0F)) << 24;
+    header |= ((uint32_t)dscp) << 16;
+    header |= ((uint32_t)total_len);
+    return header;
+}
+
+int main(void) {
+    printf("1. CPU Architecture Verification:\\n");
+    if (is_cpu_little_endian()) {
+        printf("   -> Native CPU is LITTLE-ENDIAN (Standard x86_64 / ARM64).\\n");
+    } else {
+        printf("   -> Native CPU is BIG-ENDIAN.\\n");
+    }
+
+    uint16_t local_port = 8080; // 0x1F90
+    uint16_t network_port = htons(local_port);
+
+    printf("\\n2. Network Byte Order Conversion (16-bit Port):\\n");
+    printf("   Host Format:    0x%04X (Decimal: %u)\\n", local_port, local_port);
+    printf("   Network Format: 0x%04X (Wire Bytes: %02X %02X)\\n", 
+           network_port, 
+           ((uint8_t *)&network_port)[0], 
+           ((uint8_t *)&network_port)[1]);
+
+    printf("\\n3. Packing 32-Bit Protocol Header:\\n");
+    uint32_t packed = pack_telemetry_header(4, 5, 46, 1500);
+    printf("   Packed Local Host Word: 0x%08X\\n", packed);
+
+    uint32_t wire_word = htonl(packed);
+    printf("   Converted to Network Byte Order (htonl): 0x%08X\\n", wire_word);
+
+    return 0;
+}
 ```
 
 ---
 
-## 5. Endianness on the Wire: Network Byte Order vs Host Byte Order
+## 6. Real-World Production War Stories
 
-When a computer transmits a 32-bit integer across a network (such as an IP address or port number), **in what order do the 4 bytes fly across the wire?**
-
-### The Conflict:
-* **Little-Endian (Intel x86, AMD64, ARM)**: Stores the **Least Significant Byte (LSB)** first at the lowest memory address.
-* **Big-Endian (Motorola, Network Standard)**: Stores the **Most Significant Byte (MSB)** first at the lowest memory address (just like humans read numbers from left to right).
-
-```
-   Number: 0x12345678  (4 Bytes: 0x12, 0x34, 0x56, 0x78)
-   
-   Memory Address:       0x00     0x01     0x02     0x03
-   ─────────────────────────────────────────────────────
-   Little-Endian (x86): [0x78]   [0x56]   [0x34]   [0x12]   <-- Reversed!
-   Big-Endian (Wire)  : [0x12]   [0x34]   [0x56]   [0x78]   <-- Human Order!
-```
-
-### The Universal Rule of Networking:
-The internet protocol suite strictly mandates that **Network Byte Order is ALWAYS Big-Endian**!
-
-If an Intel x86 computer sends the port number `80` (`0x0050`) to the wire without converting it, it will send the bytes in reverse order (`0x5000`), which equals port **`20480`**! The connection will instantly fail!
-
-To prevent this, POSIX systems provide standard conversion macros:
-* `htons()`: **H**ost **T**o **N**etwork **S**hort (16-bit)
-* `htonl()`: **H**ost **T**o **N**etwork **L**ong (32-bit)
-* `ntohs()`: **N**etwork **T**o **H**ost **S**hort (16-bit)
-* `ntohl()`: **N**etwork **T**o **H**ost **L**ong (32-bit)
-
----
-
-## 6. Real-World Production War Story: The Silent Endian Corruptor
-
-### The Incident:
-In 2012, a high-frequency trading platform migrated a legacy risk engine from IBM PowerPC servers (Big-Endian architecture) to modern Intel Xeon servers (Little-Endian architecture).  
-The developers recompiled the C++ codebase, and unit tests passed because tests ran locally on the same Intel chip.
-
-However, when deployed to production, the trading engine communicated with the NASDAQ stock exchange over raw binary TCP sockets. The developers forgot to wrap the `order_quantity` field in `htonl()`.
-
-### The Result:
-When an algorithm attempted to buy **100 shares** (`0x00000064`), the Little-Endian Intel processor transmitted the bytes across the socket in reverse: `0x64000000`.  
-The exchange interpreted the order not as 100 shares, but as **1,677,721,600 shares**! The trade was immediately rejected by exchange risk limiters, freezing the firm's trading operations for 2 hours and costing millions in missed volume.
-
-### The Takeaway:
-Never assume memory layout matches the wire format. Always convert data to Network Byte Order (`Big-Endian`) before calling `send()`.
+### 6.1 War Story 1: The Trans-Atlantic Subsea Fiber Cut
+* **The Incident**: On December 19, 2008, three major subsea fiber-optic telecommunication cables in the Mediterranean Sea (FLAG Europe-Asia, SEA-ME-WE 4) were severed by ship anchors off the coast of Alexandria, Egypt.
+* **The Impact**: 75% of internet connectivity between Europe, the Middle East, and India evaporated instantly.
+* **The Physical Layer Phenomenon**:
+  - Subsea fiber-optic cables use Erbium-Doped Fiber Amplifiers (EDFA) spaced every 50 to 80 kilometers along the ocean floor.
+  - When the physical glass fiber snapped, optical receivers detected complete loss of signal (LOS).
+  - High-speed DWDM (Dense Wavelength Division Multiplexing) transponders automatically shut down lasers to prevent receiver damage.
+  - Upstream BGP routers detected the physical link loss within milliseconds and rerouted hundreds of gigabits of traffic through alternate terrestrial paths across Asia, causing severe packet jitter and latency spikes from 80ms to 420ms!
 
 ---
 
 ## 7. Staff-Level Technical Interview Deep-Dives
 
-### Question 1: What is the difference between Bandwidth and Throughput?
+### Question 1: Why did Internet pioneers choose Big-Endian as the universal "Network Byte Order" instead of Little-Endian?
 **Exhaustive Answer**:
-* **Bandwidth**: The maximum theoretical physical rate at which bits can be transmitted over a communication path per second (dictated by Shannon-Hartley theorem and hardware frequency). Measured in bits per second (e.g., a $1\text{ Gbps}$ fiber link).
-* **Throughput**: The actual rate of successful data delivery achieved in practice after accounting for protocol header overhead, TCP congestion window scaling, packet loss, retransmissions, processing delays, and buffering. Throughput is always less than or equal to bandwidth ($\text{Throughput} \le \text{Bandwidth}$).
-
-### Question 2: Why does an Ethernet cable use twisted pairs of copper wires?
-**Exhaustive Answer**:
-* Ethernet cables (Cat5e, Cat6) use **Differential Signaling** over tightly twisted pairs of wires.
-* Instead of measuring voltage against a shared ground (which is vulnerable to electromagnetic interference from fluorescent lights and electrical motors), the sender transmits the signal on one wire ($+V$) and its exact inverted mirror image on the partner wire ($-V$).
-* When external electromagnetic noise hits the cable, it hits both wires equally (adding $+N$ to both).
-* The receiver calculates the difference: $(+V + N) - (-V + N) = 2V$. The noise $N$ mathematically cancels out completely! Twisting the wires ensures both wires absorb identical amounts of noise along the cable length.
+* When the ARPANET and early Internet protocols were designed in the 1970s and 1980s, large mainframe systems and minicomputers (e.g., IBM System/360, Motorola 68000, Sun SPARC) were predominantly **Big-Endian**.
+* In a packet streaming over a serial bitline, Big-Endian transmits the most significant bytes first.
+* This allowed early hardware routers and switches to inspect packet destination addresses and perform routing table lookups **on the fly as the packet was still arriving**, without waiting to buffer the entire packet into memory!
 
 ---
 
 ## 8. Complete Verification Checklist (Zero Gaps)
-Before marking Day 1 as completed in your tracker, verify that you can answer these without looking:
-- [ ] Can you state Claude Shannon's Channel Capacity Theorem and explain why $S/N$ dictates maximum speed?
-- [ ] Can you explain why Manchester encoding prevents clock drift compared to standard NRZ?
-- [ ] Can you convert `1101 0110` in binary to Hexadecimal and Decimal by hand?
-- [ ] Can you explain what happens when a Little-Endian computer sends a 16-bit integer to a Big-Endian network without `htons()`?
+- [ ] Calculate the Shannon channel capacity of a 10MHz channel with an SNR of 20 dB.
+- [ ] Why does Manchester encoding require twice the bandwidth of NRZ?
+- [ ] What is the structural difference between Big-Endian and Little-Endian memory layout?
+- [ ] Why must `htons()` be called on port numbers before binding a socket on x86_64?
