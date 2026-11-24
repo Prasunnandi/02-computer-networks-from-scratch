@@ -1,62 +1,170 @@
 # Day 14: TCP Reset (RST) Flag & Abortive Close
 
-## 1. Architectural Foundations: The Reset (RST) Flag
+## 1. Architectural Foundations: The Reset Control Flag
+In standard TCP operation, connections terminate gracefully via the 4-way FIN exchange, ensuring all buffered data in both directions is delivered and acknowledged.
 
-While `FIN` performs an orderly, graceful connection shutdown with guaranteed buffer drainage, the **Reset (`RST`) flag** is TCP's panic button. It triggers an **Abortive Close**:
-- All unread data in socket receive buffers is instantly discarded.
-- Pending outbound data in send buffers is discarded.
-- No `ACK` is expected or sent in return.
-- The connection is instantly vaporized from memory, bypassing the `TIME_WAIT` state entirely.
+The **Reset (`RST`)** flag represents an abrupt, non-negotiable termination. A segment with `RST = 1`:
+- Allocates zero acknowledgment or sequence tracking.
+- Is **never acknowledged** by the receiver.
+- Instantly tears down the connection, purging all kernel send and receive queues.
+
+```
++----------------------------------------------------------------------------+
+| When does a host emit a TCP RST?                                           |
++----------------------------------------------------------------------------+
+| 1. Port Closed: A packet arrives for a port with no listening socket.      |
+| 2. Half-Closed Data Arrival: Data arrives for a socket already shut down.   |
+| 3. Unread Data Purge: Application calls close() with unread bytes in queue.|
+| 4. SO_LINGER Abort: Application forces abortive close (zero TIME_WAIT).    |
+| 5. Security Inspection: Firewall / DPI injects RST to kill policy violation|
++----------------------------------------------------------------------------+
+```
 
 ---
 
-## 2. Common Scenarios That Trigger a TCP Reset
-
-### Scenario 1: Port Closed (Connection Refused)
-When a client sends a `SYN` to a server on a destination port where no application is listening (`ECONNREFUSED`):
-- The server kernel checks its TCP listener table.
-- Finding no matching `struct sock`, the kernel generates an immediate `RST, ACK` packet with $ack = seq + 1$.
-
-```
-Client                                                  Server (Port 8080 Closed)
-  |                                                                |
-  | -------------- SYN (seq=1000, port=8080) --------------------> |
-  |                                                                |
-  | <------------- RST, ACK (seq=0, ack=1001) -------------------- |
-  v                                                                v
-Connection Refused (ECONNREFUSED)                            Socket Destroyed
-```
-
-### Scenario 2: Half-Open Connection Recovery (Host Crash & Reboot)
-If a server crashes, loses power, and reboots while a client is connected:
-- The client, unaware of the server's reboot, sends a data segment using the old sequence numbers.
-- The rebooted server has no memory of this connection.
-- It immediately returns a `RST` packet, causing the client application to fail with `ECONNRESET` (**Connection reset by peer**).
-
-### Scenario 3: Unread Data in Socket Receive Buffer
-If a server closes a socket (`close(fd)`) while unread data still sits in its socket receive buffer:
-- The kernel treats this as a data loss bug in the application.
-- Instead of sending a graceful `FIN`, the kernel aborts with a `RST` to notify the client that its sent data was never processed!
-
----
-
-## 3. Programming Abortive Closes with `SO_LINGER`
-
-In C network programming, an application can deliberately force an abortive `RST` close to bypass `TIME_WAIT` using the `SO_LINGER` socket option:
+## 2. Abortive Close with SO_LINGER
+By default, calling `close(sock_fd)` in userspace triggers a graceful FIN exchange in the background. If userspace needs to drop a client immediately and avoid the 2MSL `TIME_WAIT` state, it configures `SO_LINGER`:
 
 ```c
+struct linger {
+    int l_onoff;  // 0 = disabled (default), 1 = enabled
+    int l_linger; // Linger timeout in seconds
+};
+```
+- If `l_onoff = 1` and `l_linger = 0`:
+  1. Any unsent data in the send buffer is discarded.
+  2. Any unread data in the receive buffer is discarded.
+  3. The kernel transmits a `RST` segment immediately.
+  4. The socket closes instantly and is freed from memory with **zero `TIME_WAIT`**.
+
+---
+
+## 3. TCP RST Injection Attacks & RFC 5961 Defenses
+Historically, an attacker who knew the 4-tuple of a connection could spoof a packet with `RST = 1`. If the sequence number was anywhere within the receiver's current window, the receiver would instantly tear down the connection (used historically to hijack BGP sessions).
+
+### RFC 5961 Blind Reset Defense
+Modern TCP stacks implement RFC 5961:
+1. If an incoming `RST` matches the **exact next expected sequence number** (`seq == RCV.NXT`), it is accepted and tears down the connection.
+2. If `seq` is inside the window but does not match `RCV.NXT` exactly:
+   - The receiver does NOT tear down the connection!
+   - The receiver sends a **Challenge ACK** containing its exact current sequence and acknowledgment numbers.
+   - If the sender was genuine, it responds with a valid RST matching the Challenge ACK. If the sender was an attacker guessing sequence numbers, the attack fails completely.
+
+---
+
+## 4. Production Masterclass: Compilable C Graceful vs Abortive Close
+
+Save as `tcp_rst_demo.c` and compile with `gcc -Wall -Wextra -O2 tcp_rst_demo.c -o tcp_rst_demo`:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/types.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 
-struct linger sl;
-sl.l_onoff = 1;  // Enable non-standard linger behavior
-sl.l_linger = 0; // Linger timeout = 0 seconds (Immediate abort)
+void demonstrate_abortive_close(int sock_fd) {
+    struct linger sl;
+    sl.l_onoff = 1;  // Enable linger
+    sl.l_linger = 0; // Timeout 0 -> ABORTIVE CLOSE (sends RST)
 
-// Set socket option:
-setsockopt(sockfd, SOL_SOCKET, SO_LINGER, &sl, sizeof(sl));
+    if (setsockopt(sock_fd, SOL_SOCKET, SO_LINGER, &sl, sizeof(sl)) < 0) {
+        perror("setsockopt(SO_LINGER)");
+    } else {
+        printf("[+] Configured SO_LINGER(l_onoff=1, l_linger=0) on socket %d\\n", sock_fd);
+    }
+}
 
-// When close() is called, kernel sends RST instead of FIN!
-close(sockfd);
+int main(void) {
+    printf("====================================================\\n");
+    printf("TCP ABORTIVE CLOSE & RST DEMONSTRATION\\n");
+    printf("====================================================\\n");
+
+    int fds[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) < 0) {
+        perror("socketpair");
+        return 1;
+    }
+
+    // Configure fds[0] for abortive RST close
+    demonstrate_abortive_close(fds[0]);
+
+    printf("[+] Closing socket fds[0] with abortive close enabled...\\n");
+    close(fds[0]); // Transmits RST
+
+    // Attempting to read on fds[1] after RST
+    char buf[64];
+    ssize_t n = read(fds[1], buf, sizeof(buf));
+    if (n < 0) {
+        printf("[+] Expected Result: read() failed with: %s (errno=%d)\\n",
+               strerror(errno), errno);
+    } else {
+        printf("[+] Read returned %zd bytes\\n", n);
+    }
+
+    close(fds[1]);
+    return 0;
+}
 ```
 
-> [!WARNING]
-> Forcing `SO_LINGER` to 0 to eliminate `TIME_WAIT` is a dangerous anti-pattern. It breaks TCP's reliable delivery semantics and can cause wandering duplicate packets to corrupt future connections.
+---
+
+## 5. Production Post-Mortem: The Cloud Load Balancer Idle-Timeout Mystery
+### The Outage
+A payment processing backend reported sporadic `Connection reset by peer` errors during bank settlement reconciliation. The errors only occurred during batch processing jobs that had a 65-second computation delay between database queries.
+
+### Root Cause Analysis
+1. The cloud Network Load Balancer (NLB) maintained an **idle connection timeout of 60 seconds**.
+2. When the backend service spent 65 seconds computing a financial ledger without transmitting data over the TCP connection, the NLB silently dropped the connection from its internal connection tracking state table.
+3. At second 65, when the backend service attempted to write the final settlement confirmation, the NLB received a packet for a connection it no longer recognized.
+4. The NLB returned a TCP `RST` to the backend, causing the database transaction to rollback with `ECONNRESET`.
+
+### Remediation
+1. **Enable TCP Keepalive**: Configure the socket to send periodic 0-byte keepalive probes every 15 seconds to keep the NLB state table alive:
+   ```c
+   int optval = 1;
+   setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &optval, sizeof(optval));
+   int idle = 15;
+   setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+   ```
+2. Align NLB idle timeout to exceed application latency thresholds (e.g. 300 seconds).---
+
+## 6. The POSIX Socket Error Taxonomy: ECONNRESET vs EPIPE vs ECONNREFUSED
+
+Understanding which kernel layer generates which error code is critical for network debugging:
+
+```
++----------------------------------------------------------------------------+
+| Error Code      | Triggering Condition             | Protocol Layer Cause  |
++----------------------------------------------------------------------------+
+| ECONNREFUSED    | Connect to a closed port         | Server sent RST       |
+| ECONNRESET      | Read from a connection after RST | Peer reset connection |
+| EPIPE           | Write to a connection after FIN  | Sent to broken pipe   |
+| ETIMEDOUT       | No response to SYN or data       | RTO timer expired     |
+| EHOSTUNREACH    | Router cannot route packet       | ICMP Type 3 Code 1    |
++----------------------------------------------------------------------------+
+```
+
+### The Subtle Difference Between EPIPE and ECONNRESET
+1. **`EPIPE`**: If Peer calls `close()`, Peer sends a `FIN`. Your local kernel receives `FIN`.
+   - If you call `write()` once, the kernel transmits the data. Peer responds with `RST` because its socket is closed.
+   - If you call `write()` a second time on that socket, your process is delivered a `SIGPIPE` signal! If `SIGPIPE` is ignored (`SIG_IGN`), the `write()` syscall returns `-1` with `errno = EPIPE`.
+2. **`ECONNRESET`**: If Peer forcibly resets the connection (e.g. crash or abortive close), your local socket receives a `RST`. Any subsequent attempt to `read()` from the socket returns `-1` with `errno = ECONNRESET`.
+
+---
+
+## 7. Packet Dissection of a Malicious TCP RST Injection
+An attacker monitoring an unencrypted TCP connection can forge a raw packet with:
+- Source IP & Port = Server IP & Port
+- Destination IP & Port = Client IP & Port
+- Flags = `0x04` (`RST`)
+- Sequence Number = Target sequence number inside client's current receive window.
+
+When the client network stack receives this forged packet, it immediately destroys the socket without notifying the server. Both sides lose sync. Modern mitigations require:
+1. **TCP MD5 Signatures (RFC 2385)**: Used exclusively for BGP peering sessions.
+2. **TCP Authentication Option (TCP-AO, RFC 5925)**: Cryptographic SHA-1/HMAC validation of every segment including RSTs.
+3. **Transport Layer Security (TLS 1.3)**: Application-layer cryptographic framing preventing blind payload and teardown manipulation.
